@@ -4,6 +4,7 @@ import 'package:my_app/core/database/tables/medicines_model.dart';
 import 'package:my_app/core/database/tables/medicines_schedules_table.dart';
 import 'package:my_app/core/database/tables/db.dart';
 import 'package:my_app/core/database/tables/dose_log_table.dart';
+import 'package:my_app/core/state/schedule_change_notifier.dart'; // <-- adjust this import to wherever you place schedule_change_notifier.dart
 
 class DoseLogScreen extends StatefulWidget {
   const DoseLogScreen({super.key});
@@ -23,11 +24,16 @@ class _DoseLogScreenState extends State<DoseLogScreen> with SingleTickerProvider
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    // Whenever a schedule is added/edited/deleted anywhere in the app, redo
+    // schedule generation so today's doses reflect it — this works no matter
+    // how you navigate here (bottom-nav tab, pushed route, anything).
+    ScheduleChangeNotifier.instance.addListener(_loadData);
     _loadData();
   }
 
   @override
   void dispose() {
+    ScheduleChangeNotifier.instance.removeListener(_loadData);
     _tabController.dispose();
     super.dispose();
   }

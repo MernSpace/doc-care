@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:my_app/core/database/tables/medicines_model.dart';
 import 'package:my_app/core/database/tables/medicines_schedules_table.dart';
 import 'package:my_app/core/database/tables/db.dart';
+import 'package:my_app/core/state/schedule_change_notifier.dart'; // <-- adjust this import to wherever you place schedule_change_notifier.dart
 import 'package:my_app/main.dart' show routeObserver; // <-- adjust this import to wherever routeObserver is defined
 
 const List<String> kWeekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -177,6 +178,9 @@ class _AllSchedulesTab extends StatelessWidget {
 
     try {
       await DBHelper.instance.deleteSchedule(schedule.id!);
+      // Let any screen deriving data from schedules (e.g. Dose Log) know it
+      // should refresh, regardless of how the user navigates between them.
+      ScheduleChangeNotifier.instance.notifyScheduleChanged();
       onChanged();
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -368,6 +372,10 @@ class _AddScheduleTab extends StatelessWidget {
             submitLabel: 'Save Schedule',
             onSubmit: (schedule) async {
               await DBHelper.instance.insertSchedule(schedule);
+              // Let any screen deriving data from schedules (e.g. Dose Log)
+              // know it should refresh, regardless of how the user
+              // navigates between them.
+              ScheduleChangeNotifier.instance.notifyScheduleChanged();
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Schedule saved')),
@@ -440,6 +448,9 @@ class _EditScheduleModal extends StatelessWidget {
                   submitLabel: 'Update Schedule',
                   onSubmit: (updated) async {
                     await DBHelper.instance.updateSchedule(updated);
+                    // Let any screen deriving data from schedules (e.g. Dose
+                    // Log) know it should refresh.
+                    ScheduleChangeNotifier.instance.notifyScheduleChanged();
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('Schedule updated')),
