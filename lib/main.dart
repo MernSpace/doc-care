@@ -8,13 +8,11 @@ import 'package:my_app/features/medicines/screens/add_medicine_screen.dart';
 import 'package:my_app/features/profile/screens/profile_screen.dart';
 import 'package:my_app/features/schedules/screens/add_medicine_schedules_screen.dart';
 import 'package:my_app/features/user/user_form_screen.dart';
-import 'package:my_app/core/notifications/notification_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize notifications BEFORE the UI starts.
-  await NotificationService.instance.init();
 
   runApp(
     const MedicineApp(),

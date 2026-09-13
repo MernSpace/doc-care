@@ -4,7 +4,6 @@ import 'package:my_app/core/database/tables/medicines_model.dart';
 import 'package:my_app/core/database/tables/medicines_schedules_table.dart';
 import 'package:my_app/core/database/tables/db.dart';
 import 'package:my_app/core/database/tables/dose_log_table.dart';
-import 'package:my_app/core/notifications/notification_service.dart';
 
 class DoseLogScreen extends StatefulWidget {
   const DoseLogScreen({super.key});
@@ -24,13 +23,6 @@ class _DoseLogScreenState extends State<DoseLogScreen> with SingleTickerProvider
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    // Actually sets up the notification channel + requests permission.
-    // Safe to call more than once (init() is idempotent), so it's fine
-    // here even if you also call NotificationService.instance.init() in
-    // main(). Doing it here too means dose reminders still get scheduled
-    // correctly even if this screen is reached before main() finishes
-    // wiring things up, or hot-reload skipped main().
-    _ensureNotificationsReady();
     _loadData();
   }
 
@@ -43,32 +35,6 @@ class _DoseLogScreenState extends State<DoseLogScreen> with SingleTickerProvider
   List<DoseLogModel> get _upcomingDoses => _doses.where((d) => !d.taken).toList();
   List<DoseLogModel> get _takenDoses => _doses.where((d) => d.taken).toList();
 
-  /// Initializes the notification plugin and, if permission hasn't been
-  /// granted yet, asks for it. Without this, [scheduleDoseNotification]
-  /// calls below will run but the OS will silently drop them because the
-  /// plugin was never initialized / permission was never granted.
-  Future<void> _ensureNotificationsReady() async {
-    await NotificationService.instance.init();
-
-    final enabled = await NotificationService.instance.areNotificationsEnabled();
-    if (!enabled) {
-      final granted = await NotificationService.instance.requestPermission();
-      if (!granted && mounted) {
-        // User declined (or previously declined, so no dialog was shown).
-        // Let them know reminders won't fire and offer a way to fix it.
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Enable notifications to get dose reminders'),
-            action: SnackBarAction(
-              label: 'Settings',
-              onPressed: () => NotificationService.instance.openNotificationSettings(),
-            ),
-          ),
-        );
-      }
-    }
-  }
-
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
@@ -77,8 +43,7 @@ class _DoseLogScreenState extends State<DoseLogScreen> with SingleTickerProvider
       var doses = await DBHelper.instance.getDoseLogsForDay(DateTime.now());
 
       // Fill in any doses today's active schedules call for but that don't
-      // have a log row yet (e.g. the first time the screen opens each day),
-      // and schedule a notification for each newly created one.
+      // have a log row yet (e.g. the first time the screen opens each day).
       await _generateTodaysDosesFromSchedules(schedules, doses, medicines);
       doses = await DBHelper.instance.getDoseLogsForDay(DateTime.now());
 
@@ -100,8 +65,7 @@ class _DoseLogScreenState extends State<DoseLogScreen> with SingleTickerProvider
   /// Checks each active schedule against today's date/weekday and inserts a
   /// DoseLogModel for any (medicine, time) pair that's due today and doesn't
   /// already have a log row — so opening the screen "checks the schedule"
-  /// and upcoming doses just appear, instead of being added by hand. Each
-  /// newly created dose also gets a scheduled notification.
+  /// and upcoming doses just appear, instead of being added by hand.
   Future<void> _generateTodaysDosesFromSchedules(
       List<MedicineScheduleModel> schedules,
       List<DoseLogModel> existingDoses,
@@ -127,9 +91,6 @@ class _DoseLogScreenState extends State<DoseLogScreen> with SingleTickerProvider
         if (scheduleEnd.isBefore(startOfDay)) continue;
       }
 
-      final medicineMatch = medicines.where((m) => m.id == schedule.medicineId);
-      final medicineName = medicineMatch.isEmpty ? 'your medicine' : medicineMatch.first.name;
-
       for (final time in schedule.times) {
         final alreadyLogged = existingDoses.any((d) =>
         d.medicineId == schedule.medicineId &&
@@ -142,21 +103,13 @@ class _DoseLogScreenState extends State<DoseLogScreen> with SingleTickerProvider
           startOfDay.year, startOfDay.month, startOfDay.day, time.hour, time.minute,
         );
 
-        final doseId = await DBHelper.instance.insertDoseLog(DoseLogModel(
+        await DBHelper.instance.insertDoseLog(DoseLogModel(
           medicineId: schedule.medicineId,
           scheduleId: schedule.id,
           scheduledTime: scheduledTime,
           createdAt: now,
           updatedAt: now,
         ));
-
-        if (schedule.reminderEnabled) {
-          await NotificationService.instance.scheduleDoseNotification(
-            doseId: doseId,
-            medicineName: medicineName,
-            scheduledTime: scheduledTime,
-          );
-        }
       }
     }
   }
@@ -181,8 +134,6 @@ class _DoseLogScreenState extends State<DoseLogScreen> with SingleTickerProvider
 
     try {
       await DBHelper.instance.markDoseTaken(dose.id!);
-      // No point alarming them for a dose they've already taken.
-      await NotificationService.instance.cancelDoseNotification(dose.id!);
     } catch (e) {
       if (!mounted) return;
       setState(() => _doses[index] = dose); // revert on failure
@@ -200,7 +151,6 @@ class _DoseLogScreenState extends State<DoseLogScreen> with SingleTickerProvider
 
     try {
       await DBHelper.instance.deleteDoseLog(dose.id!);
-      await NotificationService.instance.cancelDoseNotification(dose.id!);
     } catch (e) {
       if (!mounted) return;
       setState(() => _doses.insert(removedIndex, dose)); // revert on failure
@@ -390,9 +340,7 @@ class _AddDoseModalState extends State<_AddDoseModal> {
     );
 
     // If the picked time-of-day has already passed today, treat it as
-    // "tomorrow at that time" instead of silently scheduling a reminder
-    // in the past (which NotificationService.scheduleDoseNotification
-    // would just skip, leaving the user with no reminder at all).
+    // "tomorrow at that time" instead of silently logging it in the past.
     if (scheduledTime.isBefore(now)) {
       scheduledTime = scheduledTime.add(const Duration(days: 1));
     }
@@ -405,12 +353,7 @@ class _AddDoseModalState extends State<_AddDoseModal> {
     );
 
     try {
-      final doseId = await DBHelper.instance.insertDoseLog(dose);
-      await NotificationService.instance.scheduleDoseNotification(
-        doseId: doseId,
-        medicineName: _selectedMedicine!.name,
-        scheduledTime: scheduledTime,
-      );
+      await DBHelper.instance.insertDoseLog(dose);
       if (context.mounted) Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
